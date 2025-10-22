@@ -6,7 +6,7 @@ Minimal CLI to generate **word clouds** from PDF articles.
 Tested on **12 PDFs from _Information Processing & Management_, vol. 63 (2026) 104440** (single issue).
 
 ## Dataset (source)
-Issue landing page (ScienceDirect):  
+Issue landing page (ScienceDirect): 
 https://www.sciencedirect.com/journal/information-processing-and-management/vol/63/issue/2/part/PB  
 *Note: the issue is still in progress; contents may change.*
 
