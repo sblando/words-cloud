@@ -2,6 +2,8 @@
 import argparse
 from pathlib import Path
 import pandas as pd
+import matplotlib.pyplot as plt
+from wordcloud import WordCloud
 
 # English-only helpers from your text_clean.py (normalize/tokenize/stopwords)
 from text_clean import normalize_text, tokenize, get_stopwords
@@ -71,6 +73,36 @@ def build_vocab(tokens: list[str], stopwords: set[str]) -> pd.Series:
     return pd.Series(toks, dtype="string").value_counts()
 
 
+def make_wordcloud(freq: pd.Series, out_path: Path) -> None:
+    """
+    Render and save a word cloud PNG from a frequency Series.
+
+    Notes:
+      - set collocations=False so WordCloud doesn't auto-form bigrams;
+    """
+    if freq.empty:
+        return
+
+    # Configure word cloud canvas
+    wc = WordCloud(
+        width=1600,           # big enough for good resolution
+        height=1000,
+        background_color="white",
+        collocations=False,   # control bigrams ourselves (will arrive in next commit)
+    )
+
+    # Render from frequencies: expects a dict[str, int]
+    img = wc.generate_from_frequencies(freq.to_dict())
+
+    # Draw with matplotlib and save to disk
+    plt.figure(figsize=(12, 7))
+    plt.imshow(img)
+    plt.axis("off")          # hide axes
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=200)
+    plt.close()
+
+
 def process_issue(
     input_dir: Path,
     output_dir: Path,
@@ -78,11 +110,13 @@ def process_issue(
     extra_stop: list[str],
 ) -> None:
     """
-    Process all supported files in input_dir and write per-file & overall CSV outputs.
+    Process all supported files in input_dir and write per-file & overall outputs.
 
     Outputs:
       - <stem>_top_terms.csv            (per file)
+      - <stem>_wordcloud.png            (per file)
       - overall_top_terms.csv           (corpus-wide)
+      - overall_wordcloud.png           (corpus-wide)
     """
     # Ensure output directory exists (won't fail if it already does)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -118,7 +152,7 @@ def process_issue(
         # 4) Build per-file vocabulary (unigrams)
         uni = build_vocab(toks, stopwords)
 
-        # 5) Export per-file CSV (top-N terms to keep outputs compact)
+        # 5) Export per-file CSV + PNG (top-N terms to keep plots readable)
         if not uni.empty:
             uni_top = uni.head(top)
 
@@ -127,15 +161,20 @@ def process_issue(
                 uni_top.to_csv(header=["freq"]), encoding="utf-8"
             )
 
+            # Save word cloud PNG
+            make_wordcloud(uni_top, output_dir / f"{f.stem}_wordcloud.png")
+
             # Accumulate to overall counts (sum frequencies by token)
             overall_unigrams = uni.add(overall_unigrams, fill_value=0).astype("int64")
 
-    # 6) Export overall CSV
+    # 6) Export overall CSV + PNG
     if not overall_unigrams.empty:
         overall_uni_top = overall_unigrams.sort_values(ascending=False).head(top)
+
         (output_dir / "overall_top_terms.csv").write_text(
             overall_uni_top.to_csv(header=["freq"]), encoding="utf-8"
         )
+        make_wordcloud(overall_uni_top, output_dir / "overall_wordcloud.png")
 
     print(f"[✓] Done. Outputs in: {output_dir}")
 
@@ -143,11 +182,11 @@ def process_issue(
 def main() -> None:
     """Parse CLI arguments and run the issue processor."""
     ap = argparse.ArgumentParser(
-        "Generate unigram frequency CSVs from a folder (PDF/DOCX/TXT)."
+        "Generate unigram frequency CSVs and word clouds from a folder (PDF/DOCX/TXT)."
     )
     ap.add_argument("--input", required=True, help="Input folder with files (PDF/TXT/DOCX)")
-    ap.add_argument("--output", default="output", help="Output folder for CSVs")
-    ap.add_argument("--top", type=int, default=100, help="Top N terms to export")
+    ap.add_argument("--output", default="output", help="Output folder for CSV/PNG")
+    ap.add_argument("--top", type=int, default=100, help="Top N terms to export/plot")
     ap.add_argument("--stop", nargs="*", default=[], help="Extra stopwords (space-separated)")
     args = ap.parse_args()
 
