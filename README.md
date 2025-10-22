@@ -44,3 +44,27 @@ pip install pandas matplotlib wordcloud pdfminer.six python-docx Unidecode
 ```
 python .\src\make_clouds.py --input .\data --output .\output --top 120 --stop study results figure table method methods
 ```
+
+## 📊 Demo results
+
+Below is a small demonstration using one article from the dataset.  
+You can **download the CSV** and **view the generated word cloud**:
+
+- **Top terms (CSV):**  
+  [examples/article_01_top_terms.csv](https://github.com/sblando/words-cloud/blob/4d522c5416990a311b51d32927065cb59f60b5f5/examples/article_01_top_terms.csv)  
+  <sub>Direct download (raw): https://raw.githubusercontent.com/sblando/words-cloud/4d522c5416990a311b51d32927065cb59f60b5f5/examples/article_01_top_terms.csv</sub>
+
+- **Word cloud (PNG):**  
+  [examples/article_01_wordcloud.png](https://github.com/sblando/words-cloud/blob/4d522c5416990a311b51d32927065cb59f60b5f5/examples/article_01_wordcloud.png)
+
+### Preview
+
+![Word cloud preview – article_01](https://github.com/sblando/words-cloud/blob/4d522c5416990a311b51d32927065cb59f60b5f5/examples/article_01_wordcloud.png)
+
+> Reproduced with:
+>
+> ```bash
+> python ./src/make_clouds.py --input ./data --output ./output --top 120 --stop study results figure table method methods
+> ```
+>
+> Outputs were then copied from `./output/` to `./examples/`.
