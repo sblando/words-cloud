@@ -5,8 +5,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud
 
-# English-only helpers from your text_clean.py (normalize/tokenize/stopwords)
-from text_clean import normalize_text, tokenize, get_stopwords
+# English-only helpers from your text_clean.py (normalize/tokenize/stopwords/strip_references)
+from text_clean import normalize_text, tokenize, get_stopwords, strip_references
 
 # Readers for supported formats
 from pdfminer.high_level import extract_text as pdf_extract_text
@@ -64,8 +64,8 @@ def build_vocab(tokens: list[str], stopwords: set[str]) -> pd.Series:
     Build a unigram frequency Series from tokens.
 
     - Filters out stopwords
-    - Filters out very short tokens (<= 2 chars) to reduce noise like 'an', 'to'
-    - Returns a pandas Series[int] indexed by token, sorted by value when using .head()
+    - Filters out very short tokens (<= 2 chars)
+    - Returns a pandas Series[int] indexed by token
     """
     toks = [t for t in tokens if t not in stopwords and len(t) > 2]
     if not toks:
@@ -73,31 +73,45 @@ def build_vocab(tokens: list[str], stopwords: set[str]) -> pd.Series:
     return pd.Series(toks, dtype="string").value_counts()
 
 
+def build_bigrams(tokens: list[str], stopwords: set[str], min_freq: int = 3) -> pd.Series:
+    """
+    Create _joined bigrams (a_b) from consecutive tokens:
+      - Ignore stopwords
+      - Ignore short tokens (<= 2)
+      - Keep only those with frequency >= min_freq
+    """
+    pairs: list[str] = []
+    for a, b in zip(tokens, tokens[1:]):
+        if len(a) <= 2 or len(b) <= 2:
+            continue
+        if a in stopwords or b in stopwords:
+            continue
+        pairs.append(f"{a}_{b}")
+    if not pairs:
+        return pd.Series(dtype="int64")
+    s = pd.Series(pairs, dtype="string").value_counts()
+    return s[s >= int(min_freq)]
+
+
 def make_wordcloud(freq: pd.Series, out_path: Path) -> None:
     """
     Render and save a word cloud PNG from a frequency Series.
 
-    Notes:
-      - set collocations=False so WordCloud doesn't auto-form bigrams;
+    - collocations=False avoids WordCloud forming its own bigrams
     """
     if freq.empty:
         return
 
-    # Configure word cloud canvas
     wc = WordCloud(
-        width=1600,           # big enough for good resolution
+        width=1600,
         height=1000,
         background_color="white",
-        collocations=False,   # control bigrams ourselves (will arrive in next commit)
+        collocations=False,
     )
-
-    # Render from frequencies: expects a dict[str, int]
     img = wc.generate_from_frequencies(freq.to_dict())
-
-    # Draw with matplotlib and save to disk
     plt.figure(figsize=(12, 7))
     plt.imshow(img)
-    plt.axis("off")          # hide axes
+    plt.axis("off")
     plt.tight_layout()
     plt.savefig(out_path, dpi=200)
     plt.close()
@@ -108,73 +122,93 @@ def process_issue(
     output_dir: Path,
     top: int,
     extra_stop: list[str],
+    cut_refs: bool,
+    use_bigrams: bool,
+    min_bigram_freq: int,
 ) -> None:
     """
     Process all supported files in input_dir and write per-file & overall outputs.
 
     Outputs:
-      - <stem>_top_terms.csv            (per file)
-      - <stem>_wordcloud.png            (per file)
-      - overall_top_terms.csv           (corpus-wide)
-      - overall_wordcloud.png           (corpus-wide)
+      - <stem>_top_terms.csv                 (per file)
+      - <stem>_wordcloud.png                 (per file)
+      - <stem>_top_bigrams.csv               (per file, when --bigrams)
+      - <stem>_wordcloud_bigrams.png         (per file, when --bigrams)
+      - overall_top_terms.csv                (corpus-wide)
+      - overall_wordcloud.png                (corpus-wide)
+      - overall_top_bigrams.csv              (corpus-wide, when --bigrams)
+      - overall_wordcloud_bigrams.png        (corpus-wide, when --bigrams)
     """
-    # Ensure output directory exists (won't fail if it already does)
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Merge base English stopwords + user-provided extras
     stopwords = get_stopwords(set(extra_stop))
 
-    # Collect candidate files
     files = sorted([p for p in input_dir.iterdir() if p.suffix.lower() in SUPPORTED])
     if not files:
         print(f"No files found in {input_dir}. Supported: PDF/DOCX/TXT")
         return
 
-    # Accumulator for overall (corpus-wide) counts
     overall_unigrams = pd.Series(dtype="int64")
+    overall_bigrams = pd.Series(dtype="int64")
 
-    # Process each file independently
     for f in files:
         print(f"[+] {f.name}")
-
-        # 1) Read raw text
         raw = read_any(f)
         if not raw:
             print(f"    [warn] could not read or empty: {f.name}")
             continue
 
-        # 2) Normalize (lowercase, URLs/emails/digits removal, punctuation trim, unidecode)
-        norm = normalize_text(raw)
+        # Optionally strip references/bibliography tail; normalize CRLF -> LF first
+        if cut_refs:
+            raw = strip_references(raw.replace("\r\n", "\n"))
 
-        # 3) Tokenize (whitespace-based)
+        # Normalize + tokenize
+        norm = normalize_text(raw)
         toks = tokenize(norm)
 
-        # 4) Build per-file vocabulary (unigrams)
+        # Per-file unigrams
         uni = build_vocab(toks, stopwords)
 
-        # 5) Export per-file CSV + PNG (top-N terms to keep plots readable)
+        # Optional per-file bigrams
+        if use_bigrams:
+            bi = build_bigrams(toks, stopwords, min_bigram_freq)
+        else:
+            bi = pd.Series(dtype="int64")
+
+        # Per-file exports
         if not uni.empty:
             uni_top = uni.head(top)
-
-            # Save CSV
             (output_dir / f"{f.stem}_top_terms.csv").write_text(
                 uni_top.to_csv(header=["freq"]), encoding="utf-8"
             )
-
-            # Save word cloud PNG
             make_wordcloud(uni_top, output_dir / f"{f.stem}_wordcloud.png")
 
-            # Accumulate to overall counts (sum frequencies by token)
-            overall_unigrams = uni.add(overall_unigrams, fill_value=0).astype("int64")
+        if use_bigrams and not bi.empty:
+            bi_top = bi.head(top)
+            (output_dir / f"{f.stem}_top_bigrams.csv").write_text(
+                bi_top.to_csv(header=["freq"]), encoding="utf-8"
+            )
+            make_wordcloud(bi_top, output_dir / f"{f.stem}_wordcloud_bigrams.png")
 
-    # 6) Export overall CSV + PNG
+        # Accumulate overall
+        if not uni.empty:
+            overall_unigrams = uni.add(overall_unigrams, fill_value=0).astype("int64")
+        if use_bigrams and not bi.empty:
+            overall_bigrams = bi.add(overall_bigrams, fill_value=0).astype("int64")
+
+    # Overall exports
     if not overall_unigrams.empty:
         overall_uni_top = overall_unigrams.sort_values(ascending=False).head(top)
-
         (output_dir / "overall_top_terms.csv").write_text(
             overall_uni_top.to_csv(header=["freq"]), encoding="utf-8"
         )
         make_wordcloud(overall_uni_top, output_dir / "overall_wordcloud.png")
+
+    if use_bigrams and not overall_bigrams.empty:
+        overall_bi_top = overall_bigrams.sort_values(ascending=False).head(top)
+        (output_dir / "overall_top_bigrams.csv").write_text(
+            overall_bi_top.to_csv(header=["freq"]), encoding="utf-8"
+        )
+        make_wordcloud(overall_bi_top, output_dir / "overall_wordcloud_bigrams.png")
 
     print(f"[✓] Done. Outputs in: {output_dir}")
 
@@ -182,12 +216,15 @@ def process_issue(
 def main() -> None:
     """Parse CLI arguments and run the issue processor."""
     ap = argparse.ArgumentParser(
-        "Generate unigram frequency CSVs and word clouds from a folder (PDF/DOCX/TXT)."
+        "Generate word clouds (unigrams/bigrams) from a folder (PDF/DOCX/TXT)."
     )
     ap.add_argument("--input", required=True, help="Input folder with files (PDF/TXT/DOCX)")
     ap.add_argument("--output", default="output", help="Output folder for CSV/PNG")
     ap.add_argument("--top", type=int, default=100, help="Top N terms to export/plot")
     ap.add_argument("--stop", nargs="*", default=[], help="Extra stopwords (space-separated)")
+    ap.add_argument("--strip-refs", action="store_true", help="Drop everything after References/Bibliography")
+    ap.add_argument("--bigrams", action="store_true", help="Also build bigram clouds (e.g., machine_learning)")
+    ap.add_argument("--min-bigram-freq", type=int, default=3, help="Minimum frequency to keep a bigram")
     args = ap.parse_args()
 
     process_issue(
@@ -195,6 +232,9 @@ def main() -> None:
         Path(args.output),
         args.top,
         args.stop,
+        args.strip_refs,
+        args.bigrams,
+        args.min_bigram_freq,
     )
 
 
