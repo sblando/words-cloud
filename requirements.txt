@@ -1,0 +1,7 @@
+pandas
+matplotlib
+wordcloud
+nltk
+pdfminer.six
+python-docx
+unidecode
